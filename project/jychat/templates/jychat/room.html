@@ -1,0 +1,114 @@
+<!-- chat/templates/chat/room.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>관심사 채팅방</title>
+    <script
+  src="https://code.jquery.com/jquery-3.6.0.js"
+  integrity="sha256-H+K7U5CnXl1h5ywQfKtSj8PCmoN9aaq30gDh27Xc0jk="
+  crossorigin="anonymous"></script>
+</head>
+<body>
+    <textarea id="chat-log" cols="105" rows="20" readonly></textarea><br>
+    <input id="user-id" type="text" size="5">
+    <input id="chat-message-input" type="text" size="90"><br>
+    <input id="chat-message-submit" type="button" value="Send">
+    {{ room_name|json_script:"room-name"}} 
+    <!-- JSON_SCRIPT의 경우 PYTHON DICT을 JSON 객체 형태로 표현해 주는데
+    이를 <script id="room-name">{내용}</script> 형태로 삽입함 -->
+    
+    <div class="dblist">
+        <span>메세지 개수</span>
+        <span id="msgCount">0</span>
+    </div>
+    <script>
+        const roomName = JSON.parse(document.getElementById('room-name').textContent);
+
+        const chatSocket = new WebSocket(
+            'ws://'
+            + window.location.host
+            + '/ws/jychat/'
+            + roomName
+            + '/'
+        );
+
+        chatSocket.onmessage = function(e) {
+            /*
+            console.log(e);
+            MessageEvent {isTrusted: true, data: "{\"message\": \"\\uc548\\ub155\", \"log\": \"log\"}", origin: "ws://49.172.7.4:8000", lastEventId: "", source: null, …}
+                bubbles: false
+                cancelBubble: false
+                cancelable: false
+                composed: false
+                currentTarget: WebSocket {url: "ws://49.172.7.4:8000/ws/jychat/lccksdf2/", readyState: 1, bufferedAmount: 0, onopen: null, onerror: null, …}
+                data: "{\"message\": \"\\uc548\\ub155\", \"log\": \"log\"}"
+                defaultPrevented: false
+                eventPhase: 0
+                isTrusted: true
+                lastEventId: ""
+                origin: "ws://49.172.7.4:8000"
+                path: []
+                ports: []
+                returnValue: true
+                source: null
+                srcElement: WebSocket {url: "ws://49.172.7.4:8000/ws/jychat/lccksdf2/", readyState: 1, bufferedAmount: 0, onopen: null, onerror: null, …}
+                target: WebSocket {url: "ws://49.172.7.4:8000/ws/jychat/lccksdf2/", readyState: 1, bufferedAmount: 0, onopen: null, onerror: null, …}
+                timeStamp: 8597.5
+                type: "message"
+                userActivation: null
+                __proto__: MessageEvent
+            */
+            const data = JSON.parse(e.data);
+            document.querySelector('#chat-log').value += (data.user + ":" + data.message + '\n');   
+            const top = $('#chat-log').prop('scrollHeight'); 
+            $('#chat-log').scrollTop(top);
+        };
+
+        chatSocket.onclose = function(e) {
+            console.error('Chat socket closed unexpectedly');
+        };
+
+        document.querySelector('#chat-message-input').focus();
+        document.querySelector('#chat-message-input').onkeyup = function(e) {
+            if (e.keyCode === 13) {  // enter, return
+                document.querySelector('#chat-message-submit').click();
+            }
+        };
+
+        document.querySelector('#chat-message-submit').onclick = function(e) {
+            const messageInputDom = document.querySelector('#chat-message-input');
+            const message = messageInputDom.value;
+            const user = document.querySelector("#user-id").value;
+            chatSocket.send(JSON.stringify({
+                'message': message,
+                'user': user
+            }));
+            messageInputDom.value = '';
+        };
+    </script>
+     <script>
+          const chatListSocket = new WebSocket(
+            'ws://'
+            + window.location.host
+            + '/ws/get/dblist/'
+            );
+        
+            var interval = setInterval(function(e){
+                chatListSocket.send(JSON.stringify({
+                    'tick' : 'on',
+                })
+            )}, 1000);
+    
+            chatListSocket.onclose = function(e){
+                interval && interval.clear();
+            }
+
+            chatListSocket.onmessage = function(e){
+                var list = JSON.parse(e.data);
+                var chat_list = list.chatlist;
+                $("#msgCount").html(chat_list.length);
+            }
+     </script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+django_otp
+rest_framework
+djoser
+djangorestframework-jwt
+channels_redis

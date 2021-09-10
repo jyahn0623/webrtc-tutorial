@@ -1,0 +1,353 @@
+{% load static %}
+<html>
+    <head>
+        <title>JY WEBRTC</title>
+    </head>
+    <body>
+        <span>username</span>
+        <div>
+            <input id="username">
+            <button id="btn-join">방 입장</button>
+        </div>
+
+        <div class="main-grid-container">
+            <div id="video-container">
+                <div><video id="local-video" autoplay playsinline></video></div>
+                <button id="btn-toggle-audio">Audio Mute</button>
+                <button id="btn-toggle-video">video off</button>
+            </div>
+
+            <div id="chat">
+                <h3>CHAT</h3>
+                <div id="messages">
+                    <ul id="message-list"></ul>
+                </div>
+
+                <div><input id="msg"><button id="btn-sen-msg">보내기</button></div>
+                <button id="btn-share-screen">Share Screen</button>
+            </div>
+        </div>
+    </body>
+    <script>
+        var mapPeers = {};
+
+        var usernameInput = document.querySelector("#username");
+        var btnJoin = document.querySelector("#btn-join");
+        var sendBtn = document.querySelector("#btn-sen-msg");
+
+        var username;
+        var webSocket;
+
+        btnJoin.addEventListener('click', function(){
+            console.log("click btn-join");
+            username = usernameInput.value;
+
+            var loc = window.location;
+
+            var endPoint = 'ws://' + loc.host + loc.pathname;
+
+            console.log(endPoint);
+
+            webSocket = new WebSocket(endPoint);
+
+            webSocket.onopen = function(){
+                console.log('open');
+                sendSignal('new-peer', {});
+            }
+
+            webSocket.onerror = function(){
+                console.log('onerror');
+            }
+
+            webSocket.onmessage = function(e){
+                var data = JSON.parse(e.data);
+                var peerUsername = data.peer;
+                var action = data.action;
+
+                if (username == peerUsername) return;
+
+                var receiever_channel_name = data['message']['receiever_channel_name']
+
+                if (action == 'new-peer'){
+                    createOfferer(peerUsername, receiever_channel_name);
+
+                    return;
+                }
+
+                if (action == 'new-offer'){
+                    var offer = data['message']['sdp'];
+
+                    createAnswerer(offer, peerUsername, receiever_channel_name);
+                }
+
+                if (action == 'new-answer'){
+                    var answer = data['message']['sdp'];
+
+                    var peer = mapPeers[peerUsername][0];
+                    peer.setRemoteDescription(answer);
+
+                    return;
+                }
+
+                console.log(message);
+                sendSignal('new-peer', {});
+            }
+
+            webSocket.onclose = function(){
+                console.log('onclose');
+            }
+        })
+
+        sendBtn.addEventListener("click", function(e){
+            var messageInput = document.querySelector("#msg");
+            var message = messageInput.value;
+            
+            var li = document.createElement('li');
+            li.appendChild(document.createTextNode('Me : ' + messageInput.value));
+            messageList.appendChild(li);
+
+            var dataChannels = getDataChannels();
+
+            message = username + ':' + message;
+
+            for (index in dataChannels){
+                console.log(dataChannels);
+                dataChannels[index].send(message);
+            }
+
+            messageInput.value = '';
+        });
+
+        var localStream = new MediaStream();
+
+        const constraints = {
+            'video' : true,
+            'audio' : true
+        };
+
+        var localVideo = document.querySelector("#local-video");
+        var btnToggleAudio = document.querySelector("#btn-toggle-audio");
+        var btnToggleVideo = document.querySelector("#btn-toggle-video");
+        console.log(navigator);
+        var userMedia = navigator.mediaDevices.getUserMedia(constraints)
+                        .then(stream => {
+                            console.log(stream);
+                            localStream = stream;
+                            localVideo.srcObject = localStream;
+                            localVideo.muted = true;
+
+                            var audioTracks = stream.getAudioTracks();
+                            var vedioTracks = stream.getVideoTracks();
+
+                            audioTracks[0].enabled = true;
+                            vedioTracks[0].enabled = true;
+
+                            btnToggleAudio.addEventListener('click', () => {
+                                audioTracks[0].enabled = !audioTracks[0].enabled;
+
+                                if (audioTracks[0].enabled){
+                                    btnToggleAudio.innerHTML = 'Audio Mute';
+                                    return;
+                                }
+                                btnToggleAudio.innerHTML = 'Audio UnMute';
+                            });
+
+                            btnToggleVideo.addEventListener('click', () => {
+                                vedioTracks[0].enabled = !vedioTracks[0].enabled;
+
+                                if (audioTracks[0].enabled){
+                                    btnToggleVideo.innerHTML = 'Video Off';
+                                    return;
+                                }
+                                btnToggleVideo.innerHTML = 'Video Pm';
+                            });
+
+                        })
+                        .catch(error => console.log(error));
+        
+
+    function getDataChannels(){
+        var dataChannels = [];
+
+        for (peerUsername in mapPeers){
+            var dataChannel = mapPeers[peerUsername][1];
+            dataChannels.push(dataChannel);
+        }
+
+        return dataChannels;
+    }
+
+    function sendSignal(action, message){
+        // action is scream, mesage is dict
+        var jsonStr = JSON.stringify({
+            'peer' : username,
+            'action' : action, // new-peer, offer-peer
+            'message' : message
+        })
+
+        webSocket.send(jsonStr);
+    }
+
+    function createOfferer(peerUsername, receiever_channel_name){
+        var peer = new RTCPeerConnection(null);
+
+        addLocalTracks(peer);
+
+        var dc = peer.createDataChannel('channel'); // datachannel
+        dc.addEventListener("open", function(){
+            console.log('connection');
+        });
+
+        dc.addEventListener('message', dcOnMessage);
+
+        var removeVideo = createVideo(peerUsername);
+        // setOnTrack(peer, peerUsername);
+        setOnTrack(peer, removeVideo);
+
+        mapPeers[peerUsername] = [peer, dc];
+
+        peer.addEventListener('iceconnectionstatechange', () => {
+            var iceConnectionState = peer.iceConnectionState;
+
+            if (iceConnectionState === 'failed' || iceConnectionState === 'disconnected' || iceConnectionState == 'closed'){
+                delete mapPeers[peerUsername];
+
+                if (iceConnectionState != 'closed'){
+                    peer.close();
+                }
+
+                removeVideo(removeVideo);
+            }
+        });
+
+        peer.addEventListener('icecandidate', (event) => {
+            if (event.candidate){
+                console.log('new ice candidate:', JSON.stringify(peer.localDescription));
+
+                return;
+            } 
+
+            sendSignal('new-offer', {
+                'sdp' : peer.localDescription,
+                'receiever_channel_name' : receiever_channel_name
+            })
+        });
+
+        peer.createOffer()
+            .then(o => peer.setLocalDescription(o))
+            .then(()=>{
+                console.log('Local description set successfully');
+            });
+    }
+
+    function createAnswerer(offer, peerUsername, receiever_channel_name){
+        var peer = new RTCPeerConnection(null);
+
+        addLocalTracks(peer);
+
+
+        var removeVideo = createVideo(peerUsername);
+        // setOnTrack(peer, peerUsername);
+        setOnTrack(peer, removeVideo);
+
+        peer.addEventListener('datachannel', e => {
+            peer.dc = e.channel;
+            peer.dc.addEventListener("open", function(){
+                console.log('connection');
+            });
+            peer.dc.addEventListener('message', dcOnMessage);
+
+            mapPeers[peerUsername] = [peer, peer.dc];
+        });
+
+
+        peer.addEventListener('iceconnectionstatechange', () => {
+            var iceConnectionState = peer.iceConnectionState;
+
+            if (iceConnectionState === 'failed' || iceConnectionState === 'disconnected' || iceConnectionState == 'closed'){
+                delete mapPeers[peerUsername];
+
+                if (iceConnectionState != 'closed'){
+                    peer.close();
+                }
+
+                removeVideo(removeVideo);
+            }
+        });
+
+        peer.addEventListener('icecandidate', (event) => {
+            if (event.candidate){
+                console.log('new ice candidate:', JSON.stringify(peer.localDescription));
+
+                return;
+            } 
+
+            sendSignal('new-answer', {
+                'sdp' : peer.localDescription,
+                'receiever_channel_name' : receiever_channel_name
+            })
+        });
+
+        peer.setRemoteDescription(offer)
+            .then(() => {
+                console.log('Remote descriptions set successfultty for %s', peerUsername);
+
+                return peer.createAnswer();
+            })
+            .then(a => {
+                console.log('Answer created!');
+
+                peer.setLocalDescription(a);
+            })
+    }
+
+    function addLocalTracks(peer){
+        localStream.getTracks().forEach(track => {
+            peer.addTrack(track, localStream);
+        });
+
+        return;
+    }
+
+    var messageList = document.querySelector('#message-list')
+    function dcOnMessage(event){
+        console.log(event);
+        var message = event.data;
+        var li = document.createElement('li');
+        li.appendChild(document.createTextNode(message));
+        messageList.appendChild(li);
+    }
+
+    function createVideo(peerUsername){
+        console.log('createvideo');
+        var videoContainer = document.querySelector("#video-container");
+
+        var remoteVideo = document.createElement('video');
+        remoteVideo.id = peerUsername + '-video';
+        remoteVideo.autoplay = true;
+        remoteVideo.playsInline = true;
+
+        var videoWrapper = document.createElement('div');
+        videoContainer.appendChild(videoWrapper);
+        videoWrapper.appendChild(remoteVideo);
+
+        return remoteVideo
+    }
+    
+    function setOnTrack(peer, remoteVideo){
+        var remoteStream = new MediaStream();
+
+        remoteVideo.srcObject = remoteStream;
+        peer.addEventListener('track', async (event) => {
+            remoteStream.addTrack(event.track, remoteStream);
+        });
+    }
+
+    function removeVideo(video){
+        var videoWrapper = video.parentNode;
+
+        videoWrapper.parentNode.removeChild(videoWrapper);
+    }
+
+    </script>
+</html>
